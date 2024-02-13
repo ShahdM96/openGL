@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES // for C++
 #include "InputManager.h"
 // #include "../DisplayGLFW/display.h"
 #include "game.h"
@@ -138,6 +139,150 @@ unsigned char* halftone_pattern(unsigned char* image, int width, int hight) {
 	return newImage;
 }
 
+void maximum_suppression(const unsigned char* newImage, const float* grad_direction, unsigned char* output) {
+	const int width = 256;
+	const int hight = 256;
+	for (int x = 0; x < hight; ++x) {
+		for (int y = 0; y < width; ++y) {
+
+			if (x == 0 || y == 0 || x == hight - 1 || y == width - 1) {
+				output[x * width + y] = 0;
+				continue;
+			}
+			//gradient directions
+			float angle = grad_direction[x * width + y];
+
+			//neighboring pixels
+			float gradient1, gradient2;
+
+			if (angle < 0) {
+				angle += M_PI;
+			}
+
+			if ((angle >= 0 && angle < M_PI / 8) || (angle >= 15 * M_PI / 8 && angle < 2 * M_PI) || (angle >= 7 * M_PI / 8 && angle < 9 * M_PI / 8)) {
+				gradient1 = newImage[x * width + y + 1];
+				gradient2 = newImage[x * width + y - 1];
+			}
+			else if ((angle >= M_PI / 8 && angle < 3 * M_PI / 8) || (angle >= 9 * M_PI / 8 && angle < 11 * M_PI / 8)) {
+				gradient1 = newImage[(x + 1) * width + y + 1];
+				gradient2 = newImage[(x - 1) * width + y - 1];
+			}
+			else if ((angle >= 3 * M_PI / 8 && angle < 5 * M_PI / 8) || (angle >= 11 * M_PI / 8 && angle < 13 * M_PI / 8)) {
+				gradient1 = newImage[(x + 1) * width + y];
+				gradient2 = newImage[(x - 1) * width + y];
+			}
+			else if ((angle >= 5 * M_PI / 8 && angle < 7 * M_PI / 8) || (angle >= 13 * M_PI / 8 && angle < 15 * M_PI / 8)) {
+				gradient1 = newImage[(x - 1) * width + y + 1];
+				gradient2 = newImage[(x + 1) * width + y - 1];
+			}
+			else {
+				gradient1 = 0;
+				gradient2 = 0;
+			}
+
+			//non-maximum
+			if (newImage[x * width + y] >= gradient1 && newImage[x * width + y] >= gradient2) {
+				if (newImage[x * width + y] < 28) output[x * width + y] = 0;
+				else output[x * width + y] = 255;
+			}
+			else {
+				output[x * width + y] = 0;
+			}
+		}
+	}
+}
+
+
+void Canny_Edge_Detector(const unsigned char* image, unsigned char* output) {
+	const int width = 256;
+	const int hight = 256;
+	unsigned char newImage[hight * width];
+	for (int x = 0; x < hight * width * 4; x += 4) {
+		newImage[x / 4] = image[x];
+	}
+
+	unsigned char convolution[width * hight];
+	unsigned char derivative[width * hight];
+	float gradient_direction[width * hight];
+	unsigned char max_sup[hight * width];
+
+	float gaussian_kernel[] = { 0.125,0.125,0.125,0.125,0.25, 0.125,0.0625,0.125,0.0625 };
+
+	//convolution
+	int count = 0;
+	for (int x = 0; x < hight; ++x) {
+		for (int y = 0; y < width; ++y) {
+			int sum = 0;
+			for (int k = 0; k < 3; ++k) { //row x
+				for (int l = 0; l < 3; ++l) { //element xy
+					int image_x = x + k - 1;
+					int image_y = y + l - 1;
+					if (image_x < 0) {
+						image_x = 1;
+					}
+					if (image_y < 0) {
+						image_y = 1;
+					}
+					if (image_x >= hight) {
+						image_x = hight - 1;
+					}
+					if (image_y >= width) {
+						image_y = width - 1;
+					}
+					sum += newImage[image_x * width + image_y] * gaussian_kernel[k * 3 + l];
+				}
+			}
+			count++;
+			convolution[x * (width) + y] = sum;
+		}
+	}
+
+	//calculate derivative
+	unsigned char grayscale_dx[width * hight];
+	unsigned char grayscale_dy[width * hight];
+
+	for (int x = 1; x < hight; ++x) {
+		for (int y = 1; y < width; ++y) {
+			grayscale_dx[x * width + y] = abs(convolution[x * width + y] - convolution[x * width + y - 1]);
+			grayscale_dy[x * width + y] = abs(convolution[x * width + y] - convolution[(x - 1) * width + y]);
+			gradient_direction[x * width + y] = atan2(grayscale_dy[x * width + y], grayscale_dx[x * width + y]);
+		}
+	}
+
+	for (int x = 0; x < hight; x++) {
+		for (int y = 0; y < width; ++y) {
+			if (x == 0 || y == 0) {
+				derivative[x * width + y] = 0;
+			}
+			derivative[x * width + y] = abs((int)std::round(sqrt(grayscale_dx[x * width + y] * grayscale_dx[x * width + y] + grayscale_dy[x * width + y] * grayscale_dy[x * width + y]))) % 256;
+		}
+	}
+
+	// non-maximum suppression
+	maximum_suppression(derivative, gradient_direction, max_sup);
+
+	std::ofstream outfile;
+	outfile.open("../hw1/img4.txt", std::ios::out | std::ios::trunc);
+	outfile.clear();
+
+	for (int x = 0; x < hight; x++) {
+		for (int y = 0; y < width; y++) {
+			outfile << (255 == max_sup[x * width + y]) ? '1' : '0';
+			if (x < hight - 1 || y < width - 1)outfile << ',';
+		}
+		outfile << "\n";
+	}
+	outfile.close();
+
+	for (int x = 0; x < hight * width; x++) {
+		output[4 * x] = max_sup[x];
+		output[4 * x + 1] = max_sup[x];
+		output[4 * x + 2] = max_sup[x];
+		output[4 * x + 3] = 255;
+	}
+}
+
+//******************************************************************************
 
 int main(int argc,char *argv[])
 {
@@ -177,12 +322,16 @@ int main(int argc,char *argv[])
 	scn->SetShapeTex(0, 2);
 	scn->CustomDraw(1, 0, scn->BACK, false, true, 2);
 
-	/*
-	scn->AddTexture("../res/textures/snake1.png", false);// top right
-	scn->AddShader("../res/shaders/basicShader");
+
+	// top right - Canny Edge Detector
+	unsigned char* data_canny = stbi_load("../res/textures/lena256.jpg", &width, &height, &numComponents, 4);
+	unsigned char output[256 * 256 * 4];
+	Canny_Edge_Detector(data_canny, output);
+	scn->AddTexture(width, height, output);
 	scn->SetShapeTex(0, 3);
 	scn->CustomDraw(1, 0, scn->BACK, false, true, 3);
-	*/
+
+
 	scn->Motion();
 	display.SwapBuffers();
 
